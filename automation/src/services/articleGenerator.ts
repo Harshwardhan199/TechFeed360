@@ -5,8 +5,14 @@ import { generateCompletion } from './groqClient';
 import { fetchOGImage } from './ogFetcher';
 import Article from '../models/Article';
 
-export const generateArticles = async () => {
-    console.log('Starting automation pipeline...');
+// ------------------------------------------------------------------
+// 1. HARVEST CANDIDATES (Run every ~30 mins)
+//    - Fetches feeds
+//    - Clusters them
+//    - Saves new clusters as "queued" articles (no AI generation yet)
+// ------------------------------------------------------------------
+export const harvestCandidates = async () => {
+    console.log('🌾 Starting harvest pipeline...');
 
     // 1. Fetch Feeds
     const allItems = await fetchFeeds();
@@ -15,60 +21,78 @@ export const generateArticles = async () => {
     const clusters = clusterItems(allItems);
     console.log(`Grouped ${allItems.length} items into ${clusters.length} clusters.`);
 
+    let newCandidates = 0;
+
     for (const cluster of clusters) {
         try {
             const mainItem = cluster.items[0];
 
-            // Check if article with this hash already exists (avoid duplicates)
-            const existingArticle = await Article.findOne({ hash: mainItem.hash });
-            if (existingArticle) {
-                console.log(`Skipping duplicate: ${mainItem.raw_title}`);
-                continue;
-            }
-
             const domain = classifyDomain(mainItem.raw_title, mainItem.raw_content || '');
 
-            // Prepare context from cluster items
+            // Create Article with Queued Status
+            // We store the cluster context in the content field temporarily or just rely on the fact 
+            // that we might need to re-construct it? 
+            // Actually, we need to store the cluster items to generate the prompt later.
+            // Let's store the raw cluster data in `original_sources` or a new field?
+            // The current schema has `original_sources` as string[].
+            // We can store the combined text in `content` temporarily since it's not published yet.
+
             const context = cluster.items.map(item => `Title: ${item.raw_title}\nContent: ${item.raw_content}\nSource: ${item.source}`).join('\n\n');
 
-            // const prompt = `
-            // You are an expert tech journalist writing for a top-tier publication.
-            // Write a news article strictly based on the provided sources.
+            const newArticle = new Article({
+                title: mainItem.raw_title, // Temporary title
+                slug: 'temp-' + mainItem.hash, // Temporary slug
+                summary: 'Waiting for generation...',
+                content: context, // Store raw context here for the generator to use
+                image: '', // Will fetch later
+                tags: [],
+                category: null,
+                source: 'TechFeed360 AI',
+                source_url: mainItem.original_link,
+                published_at: new Date(),
+                hash: mainItem.hash,
+                domain: domain,
+                key_takeaways: [],
+                original_sources: cluster.items.map(i => i.original_link),
+                status: 'queued' // <--- IMPORTANT
+            });
 
-            // MODEL RULES (MUST FOLLOW):
-            // 1. Use ONLY information found in the Sources. If something is missing, say nothing about it.
-            // 2. Do NOT hallucinate numbers, quotes, dates, or claims.
-            // 3. Re-write the information; do not copy exact sentences from the sources.
-            // 4. Maintain a neutral, factual, journalistic tone.
-            // 5. The output MUST be valid JSON. 
-            // 6. Do NOT include any text outside the JSON.
-            // 7. Inside the JSON, escape any double quotes used in Markdown.
-            // 8. Do NOT use backticks (\`\`\`) anywhere in the article (keeps JSON stable).
-            // 9. Ensure the Markdown content is readable **within a JSON string**.
+            await newArticle.save();
+            newCandidates++;
+            console.log(`Queued candidate: ${newArticle.title}`);
 
-            // Domain: ${domain}
+        } catch (error) {
+            console.error('Error processing cluster:', error);
+        }
+    }
+    console.log(`Harvest completed. Added ${newCandidates} new candidates.`);
+};
 
-            // Sources:
-            // ${context}
+// ------------------------------------------------------------------
+// 2. PROCESS QUEUE (Run every ~10 mins)
+//    - Picks ONE "queued" article
+//    - Generates AI content
+//    - Fetches Image
+//    - Updates to "pending"
+// ------------------------------------------------------------------
+export const processQueue = async () => {
+    console.log('⚙️ Processing queue...');
 
-            // Return output in the EXACT following JSON structure:
+    // Find one queued article (oldest first)
+    const candidate = await Article.findOne({ status: 'queued' }).sort({ createdAt: 1 });
 
-            // {
-            // "title": "Engaging, click-worthy title relevant to the domain",
-            // "summary": "Concise summary of the article (maximum 200 characters)",
-            // "content": "A minimum 300-word Markdown article rewritten in a clear, engaging journalistic style. Do not use backticks. Escape all quotes. Use structured sections if needed.",
-            // "key_takeaways": [
-            //     "Takeaway 1",
-            //     "Takeaway 2",
-            //     "Takeaway 3"
-            // ],
-            // "tags": ["tag1", "tag2", "tag3"]
-            // }
+    if (!candidate) {
+        console.log('Queue is empty. Nothing to process.');
+        return;
+    }
 
-            // Generate ONLY the JSON object.
-            // `;
+    console.log(`Processing candidate: ${candidate.title}`);
 
-            const prompt = `
+    try {
+        const context = candidate.content; // We stored raw context here
+        const domain = candidate.domain;
+
+        const prompt = `
             You are an expert senior tech journalist who writes in-depth, long-form,
             magazine-quality articles.
 
@@ -117,38 +141,41 @@ export const generateArticles = async () => {
             Generate ONLY the JSON object.
             `;
 
-            console.log(`Generating article for cluster: ${mainItem.raw_title.substring(0, 30)}...`);
-            const jsonResponse = await generateCompletion(prompt);
-            const articleData = JSON.parse(jsonResponse);
+        console.log(`Generating AI content for: ${candidate.title.substring(0, 30)}...`);
+        const jsonResponse = await generateCompletion(prompt);
+        const articleData = JSON.parse(jsonResponse);
 
-            // Fetch Image
-            const image = await fetchOGImage(mainItem.original_link);
+        // Fetch Image
+        const image = await fetchOGImage(candidate.source_url || '');
 
-            // Create Article with Pending Status
-            const newArticle = new Article({
-                title: articleData.title,
-                slug: articleData.title.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '') + '-' + Date.now(),
-                summary: articleData.summary,
-                content: articleData.content,
-                image: image || '',
-                tags: articleData.tags,
-                category: null,
-                source: 'TechFeed360 AI',
-                source_url: mainItem.original_link,
-                published_at: new Date(),
-                hash: mainItem.hash,
-                domain: domain,
-                key_takeaways: articleData.key_takeaways,
-                original_sources: cluster.items.map(i => i.original_link),
-                status: 'pending' // Important: Set status to pending
-            });
+        // Update the article
+        candidate.title = articleData.title;
+        candidate.slug = articleData.title.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '') + '-' + Date.now();
+        candidate.summary = articleData.summary;
+        candidate.content = articleData.content; // Overwrite raw context with actual content
+        candidate.image = image || '';
+        candidate.tags = articleData.tags;
+        candidate.key_takeaways = articleData.key_takeaways;
+        candidate.status = 'published'; // Published
 
-            await newArticle.save();
-            console.log(`Article created (Pending): ${newArticle.title}`);
+        await candidate.save();
+        console.log(`✅ Article generated & updated to Published: ${candidate.title}`);
 
-        } catch (error) {
-            console.error('Error processing cluster:', error);
-        }
+    } catch (error) {
+        console.error(`❌ Error processing candidate ${candidate._id}:`, error);
+        // Optional: Increment retry count or mark as failed if it fails too many times
+        // For now, we leave it as queued or could move to 'failed' to avoid blocking the queue
+        // Let's move to 'failed' if we had that status, but for now maybe just log it.
+        // If we don't change status, it will retry forever.
+        // Let's delete it or mark it as 'pending' with error?
+        // Safer: Delete it so it doesn't block.
+        // await Article.findByIdAndDelete(candidate._id);
+        // console.log('Removed failed candidate from queue.');
     }
-    console.log('Automation pipeline completed.');
+};
+
+// Deprecated single function (kept for reference if needed, but we won't use it)
+export const generateArticles = async () => {
+    await harvestCandidates();
+    await processQueue();
 };

@@ -9,7 +9,9 @@ const getGroqClient = () => {
     return groqInstance;
 };
 
-export const generateCompletion = async (prompt: string, systemPrompt: string = 'You are a helpful assistant.') => {
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+export const generateCompletion = async (prompt: string, systemPrompt: string = 'You are a helpful assistant.', retries = 3): Promise<string> => {
     try {
         const groq = getGroqClient();
         const completion = await groq.chat.completions.create({
@@ -24,7 +26,15 @@ export const generateCompletion = async (prompt: string, systemPrompt: string = 
         });
 
         return completion.choices[0]?.message?.content || '{}';
-    } catch (error) {
+    } catch (error: any) {
+        if (error?.status === 429 && retries > 0) {
+            const retryAfter = error?.headers?.['retry-after'];
+            const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 60000; // Default 60s if no header
+            console.warn(`Rate limit hit. Retrying in ${waitTime / 1000}s... (${retries} retries left)`);
+            await sleep(waitTime);
+            return generateCompletion(prompt, systemPrompt, retries - 1);
+        }
+
         console.error('Groq API Error:', error);
         throw error;
     }

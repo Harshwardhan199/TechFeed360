@@ -38,7 +38,7 @@ const articleSchema = new mongoose.Schema({
     views: { type: Number, default: 0 },
     hash: { type: String, unique: true, index: true },
 
-    status: { type: String, enum: ['pending', 'published'], default: 'pending' },
+    status: { type: String, enum: ['queued', 'pending', 'published'], default: 'pending' },
     key_takeaways: [{ type: String }],
     original_sources: [{ type: String }],
     domain: { type: String }
