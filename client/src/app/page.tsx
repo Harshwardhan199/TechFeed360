@@ -1,42 +1,44 @@
-'use client';
-
-import { useEffect, useState } from 'react';
 import api from '@/services/api';
-import ArticleCard from '@/components/ArticleCard';
+import ArticleCard, { Article } from '@/components/ArticleCard';
 import HeroSection from '@/components/HeroSection';
 import { ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 
-export default function Home() {
-  const [articles, setArticles] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchArticles = async () => {
-      try {
-        // Fetch more articles to populate sections
-        const { data } = await api.get('/articles?pageNumber=1&pageSize=50');
-        setArticles(data.articles);
-      } catch (error) {
-        console.error(error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchArticles();
-  }, []);
-
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-600"></div>
+// Helper component for domain sections
+const DomainSection = ({ title, articles, color = "blue" }: { title: string, articles: Article[], color?: string }) => {
+  if (articles.length === 0) return null;
+  return (
+    <div className="mb-16">
+      <div className="flex items-center gap-3 mb-8">
+        <div className={`h-8 w-1 bg-${color}-600 rounded-full`}></div>
+        <h2 className="text-2xl font-bold text-slate-900">{title}</h2>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {articles.map((article: Article) => (
+          <ArticleCard key={article._id} article={article} />
+        ))}
+      </div>
     </div>
   );
+};
+
+async function getArticles() {
+  try {
+    const { data } = await api.get('/articles?pageNumber=1&pageSize=50');
+    return data.articles;
+  } catch (error) {
+    console.error('Failed to fetch articles:', error);
+    return [];
+  }
+}
+
+export default async function Home() {
+  const articles = await getArticles();
 
   const featuredArticle = articles[0];
   const latestArticles = articles.slice(1, 7);
 
-  const getDomainArticles = (domain: string) => articles.filter((a: any) => a.domain === domain).slice(0, 3);
+  const getDomainArticles = (domain: string) => articles.filter((a: Article) => a.domain === domain).slice(0, 3);
 
   const aiArticles = getDomainArticles('AI');
   const hardwareArticles = getDomainArticles('Hardware');
@@ -44,23 +46,6 @@ export default function Home() {
   const softwareArticles = getDomainArticles('Software');
   const trendsArticles = getDomainArticles('Trends');
   const bigTechArticles = getDomainArticles('Big Tech Buzz');
-
-  const DomainSection = ({ title, articles, color = "blue" }: { title: string, articles: any[], color?: string }) => {
-    if (articles.length === 0) return null;
-    return (
-      <div className="mb-16">
-        <div className="flex items-center gap-3 mb-8">
-          <div className={`h-8 w-1 bg-${color}-600 rounded-full`}></div>
-          <h2 className="text-2xl font-bold text-slate-900">{title}</h2>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {articles.map((article: any) => (
-            <ArticleCard key={article._id} article={article} />
-          ))}
-        </div>
-      </div>
-    );
-  };
 
   return (
     <main className="min-h-screen bg-slate-50 pt-10 pb-16">
@@ -81,7 +66,7 @@ export default function Home() {
             </Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {latestArticles.map((article: any) => (
+            {latestArticles.map((article: Article) => (
               <ArticleCard key={article._id} article={article} />
             ))}
           </div>

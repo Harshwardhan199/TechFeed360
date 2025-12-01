@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { format } from 'date-fns';
 import { ArrowUpRight } from 'lucide-react';
 
-interface Article {
+export interface Article {
     _id: string;
     title: string;
     slug: string;
