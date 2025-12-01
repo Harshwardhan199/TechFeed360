@@ -25,6 +25,8 @@ const DomainSection = ({ title, articles, color = "blue" }: { title: string, art
 async function getArticles() {
   try {
     const { data } = await api.get('/articles?pageNumber=1&pageSize=50');
+    console.log(data);
+
     return data.articles;
   } catch (error) {
     console.error('Failed to fetch articles:', error);

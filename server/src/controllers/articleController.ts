@@ -5,6 +5,8 @@ import Article from '../models/Article';
 // @route   GET /api/articles
 // @access  Public
 const getArticles = async (req: Request, res: Response) => {
+    console.log("Fetching articles...");
+
     const pageSize = 21;
     const page = Number(req.query.pageNumber) || 1;
 
